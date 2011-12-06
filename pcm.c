@@ -894,19 +894,23 @@ int pcm_mmap_write(struct pcm *pcm, void *buffer, unsigned int bytes)
                  * written without waiting as long as there is enough room in buffer. */
                 pcm->wait_for_avail_min = 0;
 
-                if (pcm->flags & PCM_NOIRQ)
+                if (pcm->flags & PCM_NOIRQ) {
                     time = (pcm->config.avail_min - avail) / pcm->noirq_frames_per_msec;
-
-//                err = pcm_wait(pcm, time);
-//                if (err < 0) {
-//                    pcm->running = 0;
-//                    oops(pcm, err, "wait error: hw 0x%x app 0x%x avail 0x%x\n",
-//                        (unsigned int)pcm->mmap_status->hw_ptr,
-//                        (unsigned int)pcm->mmap_control->appl_ptr,
-//                        avail);
-//                    pcm->mmap_control->appl_ptr = 0;
-//                    return err;
-//                }
+					//temp fix early-suspend sound discontinous?? why and how??
+					//some of this value is capture by experiment
+					time = time > 50 ? 20 : time; 
+				}
+				
+                err = pcm_wait(pcm, time);
+                if (err < 0) {
+                    pcm->running = 0;
+                    oops(pcm, err, "wait error: hw 0x%x app 0x%x avail 0x%x\n",
+                        (unsigned int)pcm->mmap_status->hw_ptr,
+                        (unsigned int)pcm->mmap_control->appl_ptr,
+                        avail);
+                    pcm->mmap_control->appl_ptr = 0;
+                    return err;
+                }
                 continue;
             }
         }
