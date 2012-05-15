@@ -26,7 +26,7 @@
 ** DAMAGE.
 */
 #define LOG_TAG "alsa_pcm"
-#define LOG_NDEBUG 0
+//#define LOG_NDEBUG 0
 #include <cutils/log.h>
 
 #include <stdio.h>
@@ -533,126 +533,6 @@ static int pcm_rate[] = {8000,
 
 static int size_rate = sizeof(pcm_rate) / sizeof(pcm_rate[0]);
 
-int try_pcm_rate(unsigned int card, unsigned int device,
-                     unsigned int flags, struct pcm_config *config, int requested_rate)
-{
-	struct pcm *pcm;
-    struct snd_pcm_info info;
-    struct snd_pcm_hw_params params;
-    struct snd_pcm_sw_params sparams;
-    char fn[256];
-    int rc;
-	int index = 0, cnt = 0;
-	int ret = -1;
-
-	LOGV("++++++ try_pcm_open");
-
-    pcm = calloc(1, sizeof(struct pcm));
-    if (!pcm || !config)
-    {
-        ret = -1;
-		goto TRY_END; /* TODO: could support default config here */
-    }
-	
-    pcm->config = *config;
-
-    snprintf(fn, sizeof(fn), "/dev/snd/pcmC%uD%u%c", card, device,
-             flags & PCM_IN ? 'c' : 'p');
-
-    pcm->flags = flags;
-    pcm->fd = open(fn, O_RDWR);
-    if (pcm->fd < 0) {
-        oops(pcm, errno, "cannot open device '%s'", fn);
-        ret = -1;
-		goto TRY_END;
-    }
-
-    if (ioctl(pcm->fd, SNDRV_PCM_IOCTL_INFO, &info)) {
-        oops(pcm, errno, "cannot get info");
-        ret = -1;
-		goto TRY_END;
-    }
-    info_dump(&info);
-
-	for (index = 0; index < size_rate; index++)
-	{
-		if (pcm_rate[index] == requested_rate)
-		{
-			break;
-		}
-	}
-
-	if (index == size_rate)
-	{
-		if (requested_rate < pcm_rate[0])
-		{
-			config->rate = pcm_rate[0];
-		}
-		else
-		{
-			config->rate = pcm_rate[index - 1];
-		}
-	}
-
-	for (cnt = 0; cnt < size_rate; cnt++)
-	{
-		config->rate = pcm_rate[(index + cnt) % size_rate];
-		LOGV("+++++++ try rate: %d", config->rate);
-		
-	    param_init(&params);
-	    param_set_mask(&params, SNDRV_PCM_HW_PARAM_FORMAT,
-	                   pcm_format_to_alsa(config->format));
-	    param_set_mask(&params, SNDRV_PCM_HW_PARAM_SUBFORMAT,
-	                   SNDRV_PCM_SUBFORMAT_STD);
-	    param_set_min(&params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE, config->period_size);
-	    param_set_int(&params, SNDRV_PCM_HW_PARAM_SAMPLE_BITS,
-	                  pcm_format_to_bits(config->format));
-	    param_set_int(&params, SNDRV_PCM_HW_PARAM_FRAME_BITS,
-	                  pcm_format_to_bits(config->format) * config->channels);
-	    param_set_int(&params, SNDRV_PCM_HW_PARAM_CHANNELS,
-	                  config->channels);
-	    param_set_int(&params, SNDRV_PCM_HW_PARAM_PERIODS, config->period_count);
-	    param_set_int(&params, SNDRV_PCM_HW_PARAM_RATE, config->rate);
-	    
-	    if (flags & PCM_NOIRQ) {
-
-	        if (!(flags & PCM_MMAP)) {
-	            oops(pcm, -EINVAL, "noirq only currently supported with mmap().");
-	            ret = -1;
-				goto TRY_END;
-	        }
-
-	        params.flags |= SNDRV_PCM_HW_PARAMS_NO_PERIOD_WAKEUP;
-	        pcm->noirq_frames_per_msec = config->rate / 1000;
-	    }
-
-	    if (flags & PCM_MMAP)
-	        param_set_mask(&params, SNDRV_PCM_HW_PARAM_ACCESS,
-	                   SNDRV_PCM_ACCESS_MMAP_INTERLEAVED);
-	    else
-	        param_set_mask(&params, SNDRV_PCM_HW_PARAM_ACCESS,
-	                   SNDRV_PCM_ACCESS_RW_INTERLEAVED);
-
-	    if (ioctl(pcm->fd, SNDRV_PCM_IOCTL_HW_PARAMS, &params)) {
-			LOGW("set hw params failed");
-			param_dump(&params);
-	        continue;
-	    }
-		else
-		{
-			LOGV("set hw params ok, config->rate: %d", config->rate);
-			ret = 0;
-			goto TRY_END;
-		}
-	}
-
-TRY_END:
-	if (pcm->fd >= 0)
-	{
-        close(pcm->fd);
-	}
-	return ret;
-}
 
 struct pcm *pcm_open_req(unsigned int card, unsigned int device,
                      unsigned int flags, struct pcm_config *config, int requested_rate)
@@ -666,7 +546,7 @@ struct pcm *pcm_open_req(unsigned int card, unsigned int device,
 	int index = 0, cnt = 0;
 	int ret = -1;
 
-	LOGD("pcm_open_req, card: %d, device: %d, req_rate: %d", card, device, requested_rate);
+	LOGV("pcm_open_req, card: %d, device: %d, req_rate: %d", card, device, requested_rate);
 
     pcm = calloc(1, sizeof(struct pcm));
     if (!pcm || !config)
@@ -713,7 +593,7 @@ struct pcm *pcm_open_req(unsigned int card, unsigned int device,
     for (cnt = 0; cnt < size_rate; cnt++)
 	{
 		config->rate = pcm_rate[(index + cnt) % size_rate];
-		LOGV("~~~~~~~~~~~ pcm_open_req try rate: %d", config->rate);
+		LOGV("pcm_open_req try rate: %d", config->rate);
 
 		param_init(&params);
 	    param_set_mask(&params, SNDRV_PCM_HW_PARAM_FORMAT,
@@ -755,7 +635,7 @@ struct pcm *pcm_open_req(unsigned int card, unsigned int device,
 	    }
 		else
 		{
-	    	LOGV("~~~~~~~~~~~ pcm_open_req OK config->rate: %d", config->rate);
+	    	LOGV("pcm_open_req OK config->rate: %d", config->rate);
 			break;
 		}
     }
@@ -894,7 +774,6 @@ struct pcm *pcm_open(unsigned int card, unsigned int device,
     param_set_int(&params, SNDRV_PCM_HW_PARAM_PERIODS, config->period_count);
     param_set_int(&params, SNDRV_PCM_HW_PARAM_RATE, config->rate);
     
-    LOGV("~~~~~~~~~~~ pcm_open config->rate: %d", config->rate);
     
 	param_dump(&params);
 	
