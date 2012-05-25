@@ -26,7 +26,7 @@
 ** DAMAGE.
 */
 #define LOG_TAG "alsa_pcm"
-#define LOG_NDEBUG 0
+// #define LOG_NDEBUG 0
 #include <cutils/log.h>
 
 #include <stdio.h>
