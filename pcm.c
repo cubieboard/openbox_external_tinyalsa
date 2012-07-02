@@ -26,7 +26,7 @@
 ** DAMAGE.
 */
 #define LOG_TAG "alsa_pcm"
-//#define LOG_NDEBUG 0
+// #define LOG_NDEBUG 0
 #include <cutils/log.h>
 
 #include <stdio.h>
@@ -223,6 +223,10 @@ struct pcm {
     void *mmap_buffer;
     unsigned int noirq_frames_per_msec;
     int wait_for_avail_min;
+	
+	// star add
+	int capture_channels;
+	short * p_capture_buf;
 };
 
 unsigned int pcm_get_buffer_size(struct pcm *pcm)
@@ -471,7 +475,7 @@ int pcm_read(struct pcm *pcm, void *data, unsigned int count)
     if (!(pcm->flags & PCM_IN))
         return -EINVAL;
 
-    x.buf = data;
+    x.buf = (void *)pcm->p_capture_buf;
     x.frames = count / (pcm->config.channels *
                         pcm_format_to_bits(pcm->config.format) / 8);
 
@@ -492,8 +496,21 @@ int pcm_read(struct pcm *pcm, void *data, unsigned int count)
             }
             return oops(pcm, errno, "cannot read stream data");
         }
-        return 0;
+        break;
     }
+
+	if (pcm->capture_channels == 1)
+	{
+		short * p_out_data = data;
+		int offset = 0, cnt = 0;
+		for (cnt = 0; cnt < x.frames; cnt++)
+		{
+			offset = cnt << 1;		// short
+			*(p_out_data + cnt) =  (*(pcm->p_capture_buf + offset) >> 1) + (*(pcm->p_capture_buf + offset + 1) >> 1);
+		}
+	}
+
+	return 0;
 }
 
 static struct pcm bad_pcm = {
@@ -517,6 +534,12 @@ int pcm_close(struct pcm *pcm)
     pcm->running = 0;
     pcm->buffer_size = 0;
     pcm->fd = -1;
+
+	if (pcm->p_capture_buf != 0)
+	{
+		free(pcm->p_capture_buf);
+		pcm->p_capture_buf = 0;
+	}
     free(pcm);
     return 0;
 }
@@ -556,6 +579,21 @@ struct pcm *pcm_open_req(unsigned int card, unsigned int device,
 
     snprintf(fn, sizeof(fn), "/dev/snd/pcmC%uD%u%c", card, device,
              flags & PCM_IN ? 'c' : 'p');
+
+	if ((flags & PCM_IN) && (config->channels == 1))
+	{
+		pcm->capture_channels = 1;	// flag: we need mono audio stream
+		config->channels = 2;		// set hw params stereo(2 channels)
+
+		LOGV("force capture stereo audio");
+
+		pcm->p_capture_buf = (short*)calloc(1, 1024 * 8);
+		if (pcm->p_capture_buf == 0)
+		{
+			LOGE("calloc capture buffer failed");
+			goto fail_close;
+		}
+	}
 
     pcm->flags = flags;
     pcm->fd = open(fn, O_RDWR);
