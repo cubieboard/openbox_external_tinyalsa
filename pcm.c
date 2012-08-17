@@ -26,7 +26,7 @@
 ** DAMAGE.
 */
 #define LOG_TAG "alsa_pcm"
-// #define LOG_NDEBUG 0
+#define LOG_NDEBUG 0
 #include <cutils/log.h>
 
 #include <stdio.h>
@@ -226,6 +226,7 @@ struct pcm {
 	
 	// star add
 	int capture_channels;
+	unsigned int codec_capture;
 	short * p_capture_buf;
 };
 
@@ -476,7 +477,7 @@ int pcm_read(struct pcm *pcm, void *data, unsigned int count)
         return -EINVAL;
 
     x.buf = (void *)pcm->p_capture_buf;
-    x.frames = count / (pcm->config.channels *
+    x.frames = count / (pcm->capture_channels *
                         pcm_format_to_bits(pcm->config.format) / 8);
 
     for (;;) {
@@ -499,16 +500,39 @@ int pcm_read(struct pcm *pcm, void *data, unsigned int count)
         break;
     }
 
-	if (pcm->capture_channels == 1)
+	if (pcm->codec_capture == 1)
 	{
+		if (pcm->capture_channels == 1)
+		{
+			short * p_out_data = data;
+			int offset = 0, cnt = 0;
+			for (cnt = 0; cnt < x.frames; cnt++)
+			{
+				offset = cnt << 1;		// short
+				*(p_out_data + cnt) =  (*(pcm->p_capture_buf + offset) >> 1) + (*(pcm->p_capture_buf + offset + 1) >> 1);
+			}
+		}
+		else
+		{
+			int cnt = 0;
+			short * p_out_data = data;
+			for (cnt = 0; cnt < (count >> 1); cnt++)
+			{
+				*(p_out_data + cnt) = *(pcm->p_capture_buf + cnt);
+			}
+		}
+
+	}
+	else
+	{	
+		int cnt = 0;
 		short * p_out_data = data;
-		int offset = 0, cnt = 0;
 		for (cnt = 0; cnt < x.frames; cnt++)
 		{
-			offset = cnt << 1;		// short
-			*(p_out_data + cnt) =  (*(pcm->p_capture_buf + offset) >> 1) + (*(pcm->p_capture_buf + offset + 1) >> 1);
+			*(p_out_data + cnt) = *(pcm->p_capture_buf + cnt);
 		}
 	}
+
 
 	return 0;
 }
@@ -580,13 +604,22 @@ struct pcm *pcm_open_req(unsigned int card, unsigned int device,
     snprintf(fn, sizeof(fn), "/dev/snd/pcmC%uD%u%c", card, device,
              flags & PCM_IN ? 'c' : 'p');
 
-	if ((flags & PCM_IN) && (config->channels == 1))
+	pcm->capture_channels = config->in_init_channels ;
+	pcm->codec_capture = 1;			// capture in codec device
+	
+	if ((flags & PCM_IN) && (config->in_init_channels == 1) && (card == 0))
 	{
-		pcm->capture_channels = 1;	// flag: we need mono audio stream
-		config->channels = 2;		// set hw params stereo(2 channels)
-
-		LOGV("force capture stereo audio");
-
+		config->channels = 2;		// set hw params stereo(2 channels)	
+		LOGV("force capture stereo audio");			
+	}
+	
+	if ((flags & PCM_IN) && (config->in_init_channels == 1) && (card != 0))
+	{
+		pcm->codec_capture = 0;
+		LOGV("use usb audio device");			
+	}
+	if ((flags & PCM_IN))
+	{
 		pcm->p_capture_buf = (short*)calloc(1, 1024 * 8);
 		if (pcm->p_capture_buf == 0)
 		{
