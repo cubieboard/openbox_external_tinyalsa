@@ -26,7 +26,7 @@
 ** DAMAGE.
 */
 #define LOG_TAG "alsa_pcm"
-#define LOG_NDEBUG 0
+//#define LOG_NDEBUG 0
 #include <cutils/log.h>
 
 #include <stdio.h>
@@ -505,7 +505,7 @@ int pcm_read(struct pcm *pcm, void *data, unsigned int count)
 		if (pcm->capture_channels == 1)
 		{
 			short * p_out_data = data;
-			int offset = 0, cnt = 0;
+			unsigned int offset = 0, cnt = 0;
 			for (cnt = 0; cnt < x.frames; cnt++)
 			{
 				offset = cnt << 1;		// short
@@ -514,7 +514,7 @@ int pcm_read(struct pcm *pcm, void *data, unsigned int count)
 		}
 		else
 		{
-			int cnt = 0;
+			unsigned int cnt = 0;
 			short * p_out_data = data;
 			for (cnt = 0; cnt < (count >> 1); cnt++)
 			{
@@ -525,7 +525,7 @@ int pcm_read(struct pcm *pcm, void *data, unsigned int count)
 	}
 	else
 	{	
-		int cnt = 0;
+		unsigned int cnt = 0;
 		short * p_out_data = data;
 		for (cnt = 0; cnt < x.frames; cnt++)
 		{
@@ -664,7 +664,7 @@ struct pcm *pcm_open_req(unsigned int card, unsigned int device,
     for (cnt = 0; cnt < size_rate; cnt++)
 	{
 		config->rate = pcm_rate[(index + cnt) % size_rate];
-		LOGV("pcm_open_req try rate: %d", config->rate);
+		LOGV("pcm_open_req channels: %d, try rate: %d", config->channels, config->rate);
 
 		param_init(&params);
 	    param_set_mask(&params, SNDRV_PCM_HW_PARAM_FORMAT,
@@ -713,8 +713,85 @@ struct pcm *pcm_open_req(unsigned int card, unsigned int device,
 
 	if (cnt == size_rate)
 	{
-		oops(pcm, errno, "pcm_open_req cannot set hw params");
-        goto fail_close;
+		cnt = 0;
+		config->channels = 3 - config->channels;
+		pcm->config.channels = config->channels;
+		
+		for (index = 0; index < size_rate; index++)
+		{
+			if (pcm_rate[index] == requested_rate)
+			{
+				break;
+			}
+		}
+
+		if (index == size_rate)
+		{
+			if (requested_rate < pcm_rate[0])
+			{
+				config->rate = pcm_rate[0];
+			}
+			else
+			{
+				config->rate = pcm_rate[index - 1];
+			}
+		}
+
+	    for (cnt = 0; cnt < size_rate; cnt++)
+		{
+			config->rate = pcm_rate[(index + cnt) % size_rate];
+			LOGV("pcm_open_req channels: %d, try rate: %d", config->channels, config->rate);
+
+			param_init(&params);
+		    param_set_mask(&params, SNDRV_PCM_HW_PARAM_FORMAT,
+		                   pcm_format_to_alsa(config->format));
+		    param_set_mask(&params, SNDRV_PCM_HW_PARAM_SUBFORMAT,
+		                   SNDRV_PCM_SUBFORMAT_STD);
+		    param_set_min(&params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE, config->period_size);
+		    param_set_int(&params, SNDRV_PCM_HW_PARAM_SAMPLE_BITS,
+		                  pcm_format_to_bits(config->format));
+		    param_set_int(&params, SNDRV_PCM_HW_PARAM_FRAME_BITS,
+		                  pcm_format_to_bits(config->format) * config->channels);
+		    param_set_int(&params, SNDRV_PCM_HW_PARAM_CHANNELS,
+		                  config->channels);
+		    param_set_int(&params, SNDRV_PCM_HW_PARAM_PERIODS, config->period_count);
+		    param_set_int(&params, SNDRV_PCM_HW_PARAM_RATE, config->rate);
+
+			param_dump(&params);
+
+		    if (flags & PCM_NOIRQ) {
+
+		        if (!(flags & PCM_MMAP)) {
+		            oops(pcm, -EINVAL, "noirq only currently supported with mmap().");
+		            goto fail;
+		        }
+
+		        params.flags |= SNDRV_PCM_HW_PARAMS_NO_PERIOD_WAKEUP;
+		        pcm->noirq_frames_per_msec = config->rate / 1000;
+		    }
+
+		    if (flags & PCM_MMAP)
+		        param_set_mask(&params, SNDRV_PCM_HW_PARAM_ACCESS,
+		                   SNDRV_PCM_ACCESS_MMAP_INTERLEAVED);
+		    else
+		        param_set_mask(&params, SNDRV_PCM_HW_PARAM_ACCESS,
+		                   SNDRV_PCM_ACCESS_RW_INTERLEAVED);
+
+		    if (ioctl(pcm->fd, SNDRV_PCM_IOCTL_HW_PARAMS, &params)) {
+		        LOGV("cannot set hw params");
+		    }
+			else
+			{
+				LOGV("pcm_open_req OK config->rate: %d", config->rate);
+				break;
+			}
+	    }
+
+		if (cnt == size_rate)
+		{
+			oops(pcm, errno, "pcm_open_req cannot set hw params");
+	        goto fail_close;
+		}
 	}
 
 	param_dump(&params);
